@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elf-inspector"
+version = "0.1.0"
+description = "ELF/DWARF parser for querying variable addresses in MCU firmware"
+requires-python = ">=3.8"
+dependencies = ["pyelftools>=0.29"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+elf-inspector = "elf_inspector.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["elf_inspector*"]
