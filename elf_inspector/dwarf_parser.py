@@ -157,7 +157,7 @@ class _SymEntry:
 # Disk cache structure
 # ---------------------------------------------------------------------------
 
-_CACHE_VERSION = 9   # Incremented on format change to auto-invalidate old caches
+_CACHE_VERSION = 11  # Incremented on format change to auto-invalidate old caches
 
 @dataclass
 class _Cache:
@@ -170,7 +170,7 @@ class _Cache:
     var_cu_map: Optional[Dict[str, int]] = None
     # Type name list (built on first list-types query)
     type_names: Optional[List[str]] = None
-    # Type name -> CU offset (used by list-members search)
+    # Type name -> CU offset (used by list-type search)
     type_cu_map: Optional[Dict[str, int]] = None
     # Line table [(address, filename, lineno), ...] (built on first pc2line)
     line_table: Optional[List[Tuple[int, str, int]]] = None
@@ -342,6 +342,11 @@ class DwarfIndex:
         type_name_set: set = set()
         type_tags = {"DW_TAG_typedef", "DW_TAG_structure_type", "DW_TAG_union_type"}
 
+        def remember_type(lookup_name: str, display_name: str):
+            if lookup_name not in self._type_cu_map:
+                self._type_cu_map[lookup_name] = cu_off
+            type_name_set.add(display_name)
+
         with Progress("Scanning DWARF variables and type index"):
             for cu in self._dwarf_info.iter_CUs():
                 cu_off = cu.cu_offset
@@ -360,14 +365,14 @@ class DwarfIndex:
                             self._var_cu_map[name] = cu_off
 
                     elif tag in type_tags:
-                        if name not in self._type_cu_map:
-                            self._type_cu_map[name] = cu_off
                         if tag == "DW_TAG_typedef":
-                            type_name_set.add(name)
+                            remember_type(name, name)
                         elif tag == "DW_TAG_structure_type":
-                            type_name_set.add(f"struct {name}")
+                            remember_type(name, f"struct {name}")
+                            remember_type(f"struct {name}", f"struct {name}")
                         elif tag == "DW_TAG_union_type":
-                            type_name_set.add(f"union {name}")
+                            remember_type(name, f"union {name}")
+                            remember_type(f"union {name}", f"union {name}")
 
         self._type_names = sorted(type_name_set)
         with Progress("Writing cache"):
@@ -381,7 +386,20 @@ class DwarfIndex:
     def find_type_cu(self, type_name: str) -> Optional[int]:
         """Return the CU offset where the given type is defined"""
         self._ensure_top_level_scan()
-        return self._type_cu_map.get(type_name) if self._type_cu_map else None
+        if not self._type_cu_map:
+            return None
+
+        names = [type_name]
+        for prefix in ("struct ", "union "):
+            if type_name.startswith(prefix):
+                names.append(type_name[len(prefix):])
+                break
+
+        for name in names:
+            cu_offset = self._type_cu_map.get(name)
+            if cu_offset is not None:
+                return cu_offset
+        return None
 
     def parse_cu_for_var(self, var_name: str) -> Optional[int]:
         """

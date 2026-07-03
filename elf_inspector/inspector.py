@@ -189,22 +189,20 @@ class ElfInspector:
         :returns: MemberInfo list sorted by offset
         :raises KeyError: If type is not found
         """
-        # First check already-resolved types
-        struct_node = self._find_struct_by_name(type_name)
-        if struct_node is None:
-            # Not found: proactively search DWARF top-level DIEs
-            cu_offset = self._index.find_type_cu(type_name)
-            if cu_offset is not None:
-                self._index._parse_cu(cu_offset)
-                struct_node = self._find_struct_by_name(type_name)
-
-        if struct_node is None:
-            raise KeyError(f"Type {type_name!r} not found; confirm the name is correct.")
+        struct_node = self._resolve_struct(type_name)
         return self._collect_members(struct_node)
+
+    def get_struct_size(self, type_name: str) -> int:
+        """
+        Return the byte size of a struct/union type.
+
+        Supports typedef aliases and raw names such as "struct UartConfig".
+        """
+        return self._resolve_struct(type_name).size
 
     def list_types(self) -> List[str]:
         """
-        List all typedef / struct / union type names.
+        List all known top-level type names.
 
         Scans top-level DIEs across all CUs (fast, no full resolution).
 
@@ -216,10 +214,35 @@ class ElfInspector:
     # Internal utilities
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _split_type_prefix(type_name: str):
+        for prefix, kind in (
+            ("struct ", "struct"),
+            ("union ", "union"),
+        ):
+            if type_name.startswith(prefix):
+                return kind, type_name[len(prefix):].strip()
+        return None, type_name
+
+    def _resolve_struct(self, type_name: str) -> _StructType:
+        """Find and parse a struct/union by name."""
+        struct_node = self._find_struct_by_name(type_name)
+        if struct_node is None:
+            cu_offset = self._index.find_type_cu(type_name)
+            if cu_offset is not None:
+                self._index._parse_cu(cu_offset)
+                struct_node = self._find_struct_by_name(type_name)
+
+        if struct_node is None:
+            raise KeyError(f"Type {type_name!r} not found; confirm the name is correct.")
+        return struct_node
+
     def _find_struct_by_name(self, name: str) -> Optional[_StructType]:
         """Find a _StructType by name, supporting typedef aliases."""
+        kind, raw_name = self._split_type_prefix(name)
+
         for node in self._index.types.values():
-            if isinstance(node, _TypedefType) and node.name == name:
+            if kind is None and isinstance(node, _TypedefType) and node.name == raw_name:
                 if node.target_offset is not None:
                     try:
                         real = resolve_type(node.target_offset, self._index)
@@ -229,7 +252,15 @@ class ElfInspector:
                         pass
 
         for node in self._index.types.values():
-            if isinstance(node, _StructType) and node.name == name:
+            if (
+                isinstance(node, _StructType)
+                and node.name == raw_name
+                and (
+                    kind is None
+                    or (kind == "struct" and not node.is_union)
+                    or (kind == "union" and node.is_union)
+                )
+            ):
                 return node
 
         return None

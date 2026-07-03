@@ -145,7 +145,7 @@ After installation, `python -m elf_inspector` works from any directory.
 ### 1. Variable / Struct Member Address Query
 
 ```bash
-python -m elf_inspector <elf_file> <expr>
+python -m elf_inspector <elf_file> list-globals <expr>
 ```
 
 Supported expression formats:
@@ -176,21 +176,22 @@ python -m elf_inspector <elf_file> pc2line <addr1> [addr2] [addr3] ...
 - Outputs in input order, `#0` being the top of the stack
 - Displays `<no debug info>` if no debug information is found
 
-### 3. List All Global Variables
+### 3. List All Global / Static Variables
 
 ```bash
 python -m elf_inspector <elf_file> list-globals
 ```
 
 Lists all global/static variables with name, address, and size, sorted alphabetically.
+If an expression is provided after `list-globals`, it queries that variable/member instead.
 
-### 4. List Struct Member Layout
+### 4. List Struct / Union Type Layout
 
 ```bash
-python -m elf_inspector <elf_file> list-members <TypeName>
+python -m elf_inspector <elf_file> list-type <TypeName>
 ```
 
-Lists all members of a struct or union, including: member name, byte offset, size, and type name.
+Lists the total struct/union size and all members, including: member name, byte offset, size, and type name.
 Supports both `typedef` aliases (`UartConfig`) and raw struct names (`struct UartConfig`).
 
 ### 5. List All Known Types
@@ -205,15 +206,24 @@ Lists all `typedef`, `struct`, and `union` type names found in the ELF, useful f
 
 ## Usage
 
+Show command usage and examples:
+
+```bash
+python -m elf_inspector firmware.elf help
+python -m elf_inspector firmware.elf --help
+```
+
+`help`, `-help`, `--help`, and `-h` are accepted.
+
 ### Scenario 1: Query Global Variable Address
 
 ```bash
 # 1. Simple variable
-python -m elf_inspector firmware.elf counter5msCore0
+python -m elf_inspector firmware.elf list-globals counter5msCore0
 # Output: 0xb00cd0d4  (long unsigned int, 4B)
 
 # 2. Struct variable (auto-expands all members)
-python -m elf_inspector firmware.elf sample
+python -m elf_inspector firmware.elf list-globals sample
 # Output:
 # [ThroughputModule_DataType]  sample(0xb0097ec4)  (24 bytes)
 #
@@ -225,12 +235,12 @@ python -m elf_inspector firmware.elf sample
 #     _release  0xb0097ed8  +12  1B  _Bool
 
 # 3. Nested member address
-python -m elf_inspector firmware.elf sample.payload._length
+python -m elf_inspector firmware.elf list-globals sample.payload._length
 # Output: 0xb0097ed0  (uint32_t, 4B)
 #         sample(0xb0097ec4) -> .payload(+8) -> ._length(+4)
 
 # 4. Array element
-python -m elf_inspector firmware.elf g_buf[3]
+python -m elf_inspector firmware.elf list-globals g_buf[3]
 ```
 
 ### Scenario 2: MCU Crash Call Stack Reconstruction
@@ -262,9 +272,9 @@ If you don't know the type name, search first:
 python -m elf_inspector firmware.elf list-types | grep -i uart
 
 # View detailed struct layout
-python -m elf_inspector firmware.elf list-members UartConfig
+python -m elf_inspector firmware.elf list-type UartConfig
 # Output:
-# struct/union UartConfig:
+# struct/union UartConfig  (16 bytes):
 # Member      Offset     Size  Type
 # ------------------------------------
 # baud_rate  +0          4B  uint32_t
