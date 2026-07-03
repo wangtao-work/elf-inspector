@@ -2,10 +2,9 @@
 cli.py — Command-line interface.
 
 Usage:
-  elf-inspector <elf_file> <expr>                     Query variable/member
   elf-inspector <elf_file> pc2line <addr> [addr ...]  Resolve PC addresses to source
-  elf-inspector <elf_file> list-globals               List all global variables
-  elf-inspector <elf_file> list-members <type>        List struct member layout
+  elf-inspector <elf_file> list-globals [expr]        List globals or query variable/member
+  elf-inspector <elf_file> list-type <type>           List struct/union type layout
   elf-inspector <elf_file> list-types                 List all known type names
 """
 
@@ -119,9 +118,10 @@ def _cmd_list_globals(insp: ElfInspector, args):
     print(f"\ntotal {len(globals_)} global variables")
 
 
-def _cmd_list_members(insp: ElfInspector, args):
+def _cmd_list_type(insp: ElfInspector, args):
     try:
         members = insp.list_members(args.type_name)
+        total_size = insp.get_struct_size(args.type_name)
     except KeyError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -138,7 +138,10 @@ def _cmd_list_members(insp: ElfInspector, args):
         f"{'Size':>5}  "
         f"Type"
     )
-    print(f"struct/union {args.type_name}:")
+    if args.type_name.startswith(("struct ", "union ")):
+        print(f"{args.type_name}  ({total_size} bytes):")
+    else:
+        print(f"struct/union {args.type_name}  ({total_size} bytes):")
     print(header)
     print("-" * (len(header) + max_type))
     for m in members:
@@ -191,41 +194,46 @@ def _cmd_pc2line(insp: ElfInspector, addrs: list):
         print(f"#{i:<3} 0x{addr:08x}  {loc:<{max_file_w}}  {func}")
 
 
-_SUBCOMMANDS = {"list-globals", "list-members", "list-types", "pc2line"}
+_SUBCOMMANDS = {"list-globals", "list-type", "list-types", "pc2line"}
+_HELP_COMMANDS = {"help", "-help", "--help", "-h"}
 
 _HELP = """\
 Usage:
-  elf-inspector <elf_file> <expr>                     Query variable/member (auto-detect type)
+  elf-inspector <elf_file> list-globals [expr]        List globals or query variable/member
   elf-inspector <elf_file> pc2line <addr> [addr ...]  Resolve PC addresses to source location
-  elf-inspector <elf_file> list-globals               List all global variables
-  elf-inspector <elf_file> list-members <type>        List struct members and offsets
+  elf-inspector <elf_file> list-type <type>           List struct/union type layout
   elf-inspector <elf_file> list-types                 List all known type names
 
 Examples:
-  elf-inspector fw.elf counter5msCore0                Query variable address
-  elf-inspector fw.elf sample                         Query struct (expands members)
-  elf-inspector fw.elf sample.payload._length         Deep member query
+  elf-inspector fw.elf list-globals                   List all global/static variables
+  elf-inspector fw.elf list-globals counter5msCore0   Query variable address
+  elf-inspector fw.elf list-globals sample            Query struct (expands members)
+  elf-inspector fw.elf list-globals sample.payload._length
+                                                        Deep member query
   elf-inspector fw.elf pc2line 0x80012344             Single PC address resolution
   elf-inspector fw.elf pc2line 0x80012344 0x80015678  Stack trace resolution
-  elf-inspector fw.elf list-globals                   List all global variables
-  elf-inspector fw.elf list-members UartConfig        List struct layout
+  elf-inspector fw.elf list-type UartConfig           List struct/union type layout
 """
 
 
 def main():
     args = sys.argv[1:]
 
-    if len(args) == 0 or args[0] in ("-h", "--help"):
+    if len(args) == 0 or args[0] in _HELP_COMMANDS:
         print(_HELP)
         sys.exit(0)
 
     if len(args) < 2:
-        print("Error: ELF file path and query expression required", file=sys.stderr)
-        print(_HELP)
+        print("Error: ELF file path and command required", file=sys.stderr)
+        print(_HELP, file=sys.stderr)
         sys.exit(1)
 
     elf_file = args[0]
     command = args[1]
+
+    if command in _HELP_COMMANDS:
+        print(_HELP)
+        sys.exit(0)
 
     try:
         insp = ElfInspector(elf_file)
@@ -237,17 +245,20 @@ def main():
         sys.exit(1)
 
     if command == "list-globals":
-        _cmd_list_globals(insp, None)
+        if len(args) > 2:
+            _cmd_query(insp, " ".join(args[2:]))
+        else:
+            _cmd_list_globals(insp, None)
 
-    elif command == "list-members":
+    elif command == "list-type":
         if len(args) < 3:
-            print("Error: list-members requires a type name", file=sys.stderr)
+            print("Error: list-type requires a type name", file=sys.stderr)
             sys.exit(1)
 
         class _A:
-            type_name = args[2]
+            type_name = " ".join(args[2:])
 
-        _cmd_list_members(insp, _A())
+        _cmd_list_type(insp, _A())
 
     elif command == "list-types":
         _cmd_list_types(insp, None)
@@ -259,8 +270,9 @@ def main():
         _cmd_pc2line(insp, args[2:])
 
     else:
-        # Everything else is treated as a variable/member expression
-        _cmd_query(insp, command)
+        print(f"Error: unknown command {command!r}", file=sys.stderr)
+        print(_HELP, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
